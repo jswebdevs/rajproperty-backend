@@ -6,6 +6,7 @@ const { connectDB } = require("./config/db");
 const landRoutes = require("./routes/land.routes");
 const mediaRoutes = require("./routes/media.routes");
 const flatRoutes = require("./routes/flat.routes");
+const houseRoutes = require("./routes/house.routes");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -22,6 +23,7 @@ app.use(express.json());
 app.use("/api/lands", landRoutes);
 app.use("/api/flats", flatRoutes);
 app.use("/api/media", mediaRoutes);
+app.use("/api/house", houseRoutes);
 app.use("/uploads", express.static("uploads"));
 
 // Connect DB and start server
