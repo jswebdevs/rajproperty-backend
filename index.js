@@ -23,7 +23,7 @@ app.use(express.json());
 app.use("/api/lands", landRoutes);
 app.use("/api/flats", flatRoutes);
 app.use("/api/media", mediaRoutes);
-app.use("/api/house", houseRoutes);
+app.use("/api/houses", houseRoutes);
 app.use("/uploads", express.static("uploads"));
 
 // Connect DB and start server
