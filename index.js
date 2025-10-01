@@ -30,7 +30,7 @@ app.use("/api/houses", houseRoutes);
 app.use("/uploads", express.static("uploads"));
 app.use("/api/featured", featuredRoutes);
 app.use("/api/recent", recentRoutes);
-app.use("/api/properties", allRoutes);
+app.use("/api/all", allRoutes);
 
 // Connect DB and start server
 connectDB()
