@@ -9,6 +9,7 @@ const flatRoutes = require("./routes/flat.routes");
 const houseRoutes = require("./routes/house.routes");
 const featuredRoutes = require("./routes/featured.routes");
 const recentRoutes = require("./routes/recent.routes");
+const allRoutes = require("./routes/all.routes");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -29,6 +30,7 @@ app.use("/api/houses", houseRoutes);
 app.use("/uploads", express.static("uploads"));
 app.use("/api/featured", featuredRoutes);
 app.use("/api/recent", recentRoutes);
+app.use("/api/properties", allRoutes);
 
 // Connect DB and start server
 connectDB()
