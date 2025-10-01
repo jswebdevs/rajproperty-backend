@@ -10,6 +10,10 @@ const mediaRoutes = require("./routes/media.routes");
 const featuredRoutes = require("./routes/featured.routes");
 const recentRoutes = require("./routes/recent.routes");
 const allRoutes = require("./routes/all.routes");
+const draftRoutes = require("./routes/drafts.routes");
+const messageRoutes = require("./routes/messages.routes");
+
+
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -52,6 +56,8 @@ app.use("/uploads", express.static("uploads"));
 app.use("/api/featured", featuredRoutes);
 app.use("/api/recent", recentRoutes);
 app.use("/api/all", allRoutes);
+app.use("/api/drafts", draftRoutes);
+app.use("/api/messages", messageRoutes);
 
 // Root endpoint
 app.get("/", (req, res) => res.send("Server is Running!"));
