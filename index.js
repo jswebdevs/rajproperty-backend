@@ -16,7 +16,7 @@ const port = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: ["http://localhost:5173", "https://rajpropertyfront.netlify.app/", "https://www.rajproperty.site"], // allow frontend URLs
+  origin: ["http://localhost:5173", "https://rajpropertyfront.netlify.app", "https://www.rajproperty.site"], // allow frontend URLs
   methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true
 }));
