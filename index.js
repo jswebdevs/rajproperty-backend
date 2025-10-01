@@ -17,6 +17,7 @@ const port = process.env.PORT || 5000;
 // Flexible CORS middleware
 const allowedOrigins = [
   "http://localhost:5173",
+  "https://rajpropertyfront.netlify.app",
   "https://www.rajproperty.site"
 ];
 
