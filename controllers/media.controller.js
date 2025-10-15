@@ -3,7 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const sharp = require("sharp");
 const ffmpeg = require("fluent-ffmpeg");
-ffmpeg.setFfmpegPath("C:\\ffm\\bin\\ffmpeg.exe");   // Windows path
+ffmpeg.setFfmpegPath("C:\\ffm\\bin\\ffmpeg.exe"); // Windows path
 ffmpeg.setFfprobePath("C:\\ffm\\bin\\ffprobe.exe");
 const { ObjectId } = require("mongodb");
 
@@ -16,7 +16,11 @@ function getFolderByMime(mime) {
 
 // Generate image thumbnail
 async function generateImageThumb(filePath, thumbPath) {
-  await sharp(filePath).resize(200, 200, { fit: "inside" }).toFile(thumbPath);
+  try {
+    await sharp(filePath).resize(100, 100, { fit: "inside" }).toFile(thumbPath);
+  } catch (err) {
+    console.warn(`Image thumbnail generation failed for ${filePath}:`, err.message);
+  }
 }
 
 // Generate video thumbnail
@@ -24,16 +28,18 @@ async function generateVideoThumb(filePath, thumbPath) {
   return new Promise((resolve, reject) => {
     ffmpeg(filePath)
       .on("end", () => resolve())
-      .on("error", (err) => reject(err))
+      .on("error", (err) => {
+        console.warn(`Video thumbnail generation failed for ${filePath}:`, err.message);
+        resolve(); // Continue even if thumbnail fails
+      })
       .screenshots({
         count: 1,
-        folder: path.dirname(thumbPath),    // save in same folder
-        filename: path.basename(thumbPath), // exact filename
-        size: "320x?",                       // optional
+        folder: path.dirname(thumbPath),
+        filename: path.basename(thumbPath),
+        size: "160x?",
       });
   });
 }
-
 
 // Upload media
 async function addMedia(req, res) {
@@ -45,60 +51,48 @@ async function addMedia(req, res) {
     const mediaCollection = getDB().collection("media");
     const mediaDocs = [];
 
-    for (const file of files) {
-      const folder = getFolderByMime(file.mimetype);
-      const filePath = file.path;
-      let thumbUrl = null;
+    // Process files concurrently
+    await Promise.all(
+      files.map(async (file) => {
+        const folder = getFolderByMime(file.mimetype);
+        const filePath = file.path;
+        let thumbUrl = null;
 
-      if (folder === "img") {
-        // Image thumbnail
-        const thumbPath = path.join(path.dirname(filePath), "thumb-" + file.filename);
-        await sharp(filePath).resize(200, 200, { fit: "inside" }).toFile(thumbPath);
-        thumbUrl = "/" + path.relative(path.join(__dirname, "../"), thumbPath).replace(/\\/g, "/");
-
-      } else if (folder === "vid") {
-        // Video thumbnail
-        const thumbFilename = "thumb-" + file.filename + ".png";
-        const thumbPath = path.join(path.dirname(filePath), thumbFilename);
-
-        // Generate thumbnail with ffmpeg
-        await new Promise((resolve, reject) => {
-          ffmpeg(filePath)
-            .screenshots({
-              count: 1,
-              folder: path.dirname(thumbPath),
-              filename: path.basename(thumbPath),
-              size: "320x?",
-            })
-            .on("end", resolve)
-            .on("error", (err) => {
-              console.warn("Video thumbnail failed:", err.message);
-              resolve(); // still continue upload
-            });
-        });
-
-        // Only set thumbUrl if file exists
-        if (fs.existsSync(thumbPath)) {
-          thumbUrl = "/" + path.relative(path.join(__dirname, "../"), thumbPath).replace(/\\/g, "/");
+        try {
+          if (folder === "img") {
+            const thumbPath = path.join(path.dirname(filePath), "thumb-" + file.filename);
+            await generateImageThumb(filePath, thumbPath);
+            if (fs.existsSync(thumbPath)) {
+              thumbUrl = `/uploads/${folder}/${path.basename(thumbPath)}`;
+            }
+          } else if (folder === "vid") {
+            const thumbFilename = "thumb-" + file.filename + ".png";
+            const thumbPath = path.join(path.dirname(filePath), thumbFilename);
+            await generateVideoThumb(filePath, thumbPath);
+            if (fs.existsSync(thumbPath)) {
+              thumbUrl = `/uploads/${folder}/${path.basename(thumbPath)}`;
+            }
+          }
+        } catch (err) {
+          console.warn(`Thumbnail processing failed for ${file.filename}:`, err.message);
         }
-      }
 
-      // Push media doc
-      mediaDocs.push({
-        filename: file.filename,
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
-        folder,
-        uploadDate: new Date(),
-        url: "/" + path.relative(path.join(__dirname, "../uploads"), filePath).replace(/\\/g, "/"),
-        thumbUrl,
-        title: req.body.title || file.originalname,
-        description: req.body.description || "",
-        altText: req.body.altText || "",
-        tags: req.body.tags ? req.body.tags.split(",") : [],
-      });
-    }
+        mediaDocs.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+          folder,
+          uploadDate: new Date(),
+          url: `/uploads/${folder}/${file.filename}`,
+          thumbUrl,
+          title: req.body.title || file.originalname,
+          description: req.body.description || "",
+          altText: req.body.altText || "",
+          tags: req.body.tags ? req.body.tags.split(",") : [],
+        });
+      })
+    );
 
     const result = await mediaCollection.insertMany(mediaDocs);
     res.status(201).json(result.ops || mediaDocs);
@@ -107,7 +101,6 @@ async function addMedia(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
-
 
 // Get all media with file existence check
 async function getAllMedia(req, res) {
@@ -119,7 +112,7 @@ async function getAllMedia(req, res) {
         { originalName: { $regex: search, $options: "i" } },
         { tags: { $in: [new RegExp(search, "i")] } },
       ];
-    if (type) query.mimeType = { $regex: type };
+    if (type) query.mimeType = { $regex: type, $options: "i" };
     if (fromDate) query.uploadDate = { ...query.uploadDate, $gte: new Date(fromDate) };
     if (toDate) query.uploadDate = { ...query.uploadDate, $lte: new Date(toDate) };
 
@@ -141,6 +134,7 @@ async function getAllMedia(req, res) {
     const total = await mediaCollection.countDocuments(query);
     res.json({ media, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
+    console.error("Get all media error:", err);
     res.status(500).json({ error: err.message });
   }
 }
@@ -159,6 +153,7 @@ async function getMediaById(req, res) {
 
     res.json({ ...media, fileExists: exists });
   } catch (err) {
+    console.error("Get media by ID error:", err);
     res.status(500).json({ error: err.message });
   }
 }
@@ -213,6 +208,7 @@ async function updateMedia(req, res) {
       return res.status(404).json({ error: "Media not found" });
     res.json({ message: "Media updated successfully" });
   } catch (err) {
+    console.error("Update media error:", err);
     res.status(500).json({ error: err.message });
   }
 }
