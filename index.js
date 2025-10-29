@@ -1,10 +1,14 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
+const https = require("https");
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 const { Server } = require("socket.io");
-
 const { connectDB, getDB } = require("./config/db");
+
+// ROUTES
 const landRoutes = require("./routes/land.routes");
 const flatRoutes = require("./routes/flat.routes");
 const houseRoutes = require("./routes/house.routes");
@@ -18,63 +22,69 @@ const chatRoutes = require("./routes/chat.routes");
 const visitorRoutes = require("./routes/visitor.routes");
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 443;
 
-// CORS middleware
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      const allowedOrigins = [
-        "http://localhost:5173",
-        "https://rajpropertyfront.netlify.app",
-        "https://www.rajproperty.site",
-      ];
-      if (allowedOrigins.includes(origin) || /\.netlify\.app$/.test(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS: " + origin));
-      }
-    },
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
-  })
-);
+// ALLOWED ORIGINS
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://rajpropertyfront.netlify.app",
+  "https://www.rajproperty.site",
+  "https://rajproperty.site",
+];
 
-// Parse JSON
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
+
 app.use(express.json());
 
-// Root endpoint
-app.get("/", (req, res) => res.send("Server is Running!"));
+// STATIC UPLOADS
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// Create HTTP server for Socket.IO
-const server = http.createServer(app);
+// ROOT ROUTE
+app.get("/", (req, res) => {
+  res.send("🚀 RajProperty Backend is Running Securely!");
+});
 
-// Setup Socket.IO
+// HTTPS OR HTTP SERVER
+let server;
+let usingHTTPS = false;
+try {
+  const sslOptions = {
+    key: fs.readFileSync("/etc/letsencrypt/live/backend.rajproperty.site/privkey.pem"),
+    cert: fs.readFileSync("/etc/letsencrypt/live/backend.rajproperty.site/fullchain.pem"),
+  };
+  server = https.createServer(sslOptions, app);
+  usingHTTPS = true;
+  console.log("✅ Using HTTPS (production)");
+} catch (err) {
+  console.log("⚙️ SSL not found, using HTTP (development)");
+  server = http.createServer(app);
+}
+
+// SOCKET.IO
 const io = new Server(server, {
   cors: {
-    origin: [
-      "http://localhost:5173",
-      "https://rajpropertyfront.netlify.app",
-      "https://www.rajproperty.site",
-    ],
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
+  transports: ["websocket", "polling"],
 });
 
-// Make io accessible in routes/controllers
 app.use((req, res, next) => {
   req.io = io;
   next();
 });
 
-// Routes
+// ROUTES
 app.use("/api/lands", landRoutes);
 app.use("/api/flats", flatRoutes);
 app.use("/api/houses", houseRoutes);
-app.use("/api/media", mediaRoutes);
-app.use("/uploads", express.static("uploads"));
+app.use("/api/media", mediaRoutes);     // <--- POST /api/media MUST BE ACTIVE!
 app.use("/api/featured", featuredRoutes);
 app.use("/api/recent", recentRoutes);
 app.use("/api/all", allRoutes);
@@ -83,11 +93,10 @@ app.use("/api/messages", messageRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/visitor", visitorRoutes);
 
-// Socket.IO real-time chat
+// SOCKET EVENTS
 io.on("connection", (socket) => {
+  console.log("✅ Socket connected:", socket.id);
 
-
-  // Listen for new chat messages
   socket.on("send_message", async (data) => {
     try {
       const db = getDB();
@@ -96,30 +105,36 @@ io.on("connection", (socket) => {
       if (!email || !sender || !message) return;
 
       const newMessage = {
-        id: new Date().getTime().toString(), // simple id for real-time
+        id: new Date().getTime().toString(),
         sender,
         message,
         createdAt: new Date(),
       };
 
-      // Save message in MongoDB under visitor
       await db.collection("visitors").updateOne(
         { email },
         { $push: { messages: newMessage } },
-        { upsert: true } // create visitor if not exists
+        { upsert: true }
       );
 
-      // Broadcast to all clients
       io.emit("receive_message", { email, ...newMessage });
     } catch (err) {
-      console.error("Error saving chat message:", err);
+      console.error("❌ Error saving chat message:", err);
     }
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ Socket disconnected:", socket.id);
   });
 });
 
-// Connect DB and start server
+// START SERVER
 connectDB()
   .then(() => {
-    server.listen(port, () => console.log(`🚀 Server running on port ${port}!`));
+    server.listen(port, () => {
+      console.log(
+        `🚀 ${usingHTTPS ? "Secure (HTTPS)" : "Local (HTTP)"} server running on port ${port}!`
+      );
+    });
   })
   .catch((err) => console.error("❌ Failed to connect to DB:", err));

@@ -3,34 +3,36 @@ const path = require("path");
 const fs = require("fs");
 const sharp = require("sharp");
 const ffmpeg = require("fluent-ffmpeg");
-ffmpeg.setFfmpegPath("C:\\ffm\\bin\\ffmpeg.exe"); // Windows path
-ffmpeg.setFfprobePath("C:\\ffm\\bin\\ffprobe.exe");
 const { ObjectId } = require("mongodb");
 
-// Determine folder type
+// --- Set ffmpeg binary paths (adjust for Linux or Windows) ---
+ffmpeg.setFfmpegPath("C:\\ffm\\bin\\ffmpeg.exe");
+ffmpeg.setFfprobePath("C:\\ffm\\bin\\ffprobe.exe");
+
+// --- Determine folder type by MIME ---
 function getFolderByMime(mime) {
   if (mime.startsWith("image/")) return "img";
   if (mime.startsWith("video/")) return "vid";
   return "docs";
 }
 
-// Generate image thumbnail
+// --- Generate thumbnail for images ---
 async function generateImageThumb(filePath, thumbPath) {
   try {
-    await sharp(filePath).resize(100, 100, { fit: "inside" }).toFile(thumbPath);
+    await sharp(filePath).resize(200, 200, { fit: "inside" }).toFile(thumbPath);
   } catch (err) {
-    console.warn(`Image thumbnail generation failed for ${filePath}:`, err.message);
+    console.warn(`⚠️ Failed to generate image thumbnail for ${filePath}: ${err.message}`);
   }
 }
 
-// Generate video thumbnail
+// --- Generate thumbnail for videos ---
 async function generateVideoThumb(filePath, thumbPath) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     ffmpeg(filePath)
       .on("end", () => resolve())
       .on("error", (err) => {
-        console.warn(`Video thumbnail generation failed for ${filePath}:`, err.message);
-        resolve(); // Continue even if thumbnail fails
+        console.warn(`⚠️ Failed to generate video thumbnail for ${filePath}: ${err.message}`);
+        resolve();
       })
       .screenshots({
         count: 1,
@@ -41,40 +43,47 @@ async function generateVideoThumb(filePath, thumbPath) {
   });
 }
 
-// Upload media
+// === ADD MEDIA ===
 async function addMedia(req, res) {
   try {
     const files = req.files;
-    if (!files || files.length === 0)
+    if (!files || files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" });
+    }
 
-    const mediaCollection = getDB().collection("media");
+    const db = getDB();
+    const mediaCollection = db.collection("media");
     const mediaDocs = [];
 
-    // Process files concurrently
+    // ✅ Use your production domain always
+    const baseUrl ="https://backend.rajproperty.site";
     await Promise.all(
       files.map(async (file) => {
         const folder = getFolderByMime(file.mimetype);
         const filePath = file.path;
         let thumbUrl = null;
 
+        // Ensure subfolder exists
+        const uploadDir = path.join(__dirname, `../uploads/${folder}`);
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
         try {
           if (folder === "img") {
-            const thumbPath = path.join(path.dirname(filePath), "thumb-" + file.filename);
+            const thumbPath = path.join(uploadDir, "thumb-" + file.filename);
             await generateImageThumb(filePath, thumbPath);
             if (fs.existsSync(thumbPath)) {
-              thumbUrl = `/uploads/${folder}/${path.basename(thumbPath)}`;
+              thumbUrl = `${baseUrl}/uploads/${folder}/thumb-${file.filename}`;
             }
           } else if (folder === "vid") {
             const thumbFilename = "thumb-" + file.filename + ".png";
-            const thumbPath = path.join(path.dirname(filePath), thumbFilename);
+            const thumbPath = path.join(uploadDir, thumbFilename);
             await generateVideoThumb(filePath, thumbPath);
             if (fs.existsSync(thumbPath)) {
-              thumbUrl = `/uploads/${folder}/${path.basename(thumbPath)}`;
+              thumbUrl = `${baseUrl}/uploads/${folder}/${thumbFilename}`;
             }
           }
         } catch (err) {
-          console.warn(`Thumbnail processing failed for ${file.filename}:`, err.message);
+          console.warn(`⚠️ Thumbnail generation failed for ${file.filename}:`, err.message);
         }
 
         mediaDocs.push({
@@ -84,7 +93,7 @@ async function addMedia(req, res) {
           size: file.size,
           folder,
           uploadDate: new Date(),
-          url: `/uploads/${folder}/${file.filename}`,
+          url: `${baseUrl}/uploads/${folder}/${file.filename}`,
           thumbUrl,
           title: req.body.title || file.originalname,
           description: req.body.description || "",
@@ -94,121 +103,117 @@ async function addMedia(req, res) {
       })
     );
 
-    const result = await mediaCollection.insertMany(mediaDocs);
-    res.status(201).json(result.ops || mediaDocs);
+    await mediaCollection.insertMany(mediaDocs);
+    res.status(201).json(mediaDocs);
   } catch (err) {
-    console.error("Add media error:", err);
+    console.error("❌ Add media error:", err);
     res.status(500).json({ error: err.message });
   }
 }
 
-// Get all media with file existence check
+// === GET ALL MEDIA ===
 async function getAllMedia(req, res) {
   try {
     const { search, type, fromDate, toDate, limit = 20, page = 1 } = req.query;
     const query = {};
+
     if (search)
       query.$or = [
         { originalName: { $regex: search, $options: "i" } },
         { tags: { $in: [new RegExp(search, "i")] } },
       ];
+
     if (type) query.mimeType = { $regex: type, $options: "i" };
     if (fromDate) query.uploadDate = { ...query.uploadDate, $gte: new Date(fromDate) };
     if (toDate) query.uploadDate = { ...query.uploadDate, $lte: new Date(toDate) };
 
-    const mediaCollection = getDB().collection("media");
+    const db = getDB();
+    const mediaCollection = db.collection("media");
 
-    let media = await mediaCollection
+    const media = await mediaCollection
       .find(query)
       .sort({ uploadDate: -1 })
-      .skip((page - 1) * limit)
+      .skip((page - 1) * parseInt(limit))
       .limit(parseInt(limit))
       .toArray();
-
-    // Filter out missing files
-    media = media.filter((m) => {
-      const filePath = path.join(__dirname, "../uploads", m.folder, m.filename);
-      return fs.existsSync(filePath);
-    });
 
     const total = await mediaCollection.countDocuments(query);
     res.json({ media, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
-    console.error("Get all media error:", err);
+    console.error("❌ Get all media error:", err);
     res.status(500).json({ error: err.message });
   }
 }
 
-// Get single media by ID
+// === GET MEDIA BY ID ===
 async function getMediaById(req, res) {
   try {
     const { id } = req.params;
-    const mediaCollection = getDB().collection("media");
-    const media = await mediaCollection.findOne({ _id: new ObjectId(id) });
+    const db = getDB();
+    const media = await db.collection("media").findOne({ _id: new ObjectId(id) });
 
     if (!media) return res.status(404).json({ error: "Media not found" });
-
-    const filePath = path.join(__dirname, "../uploads", media.folder, media.filename);
-    const exists = fs.existsSync(filePath);
-
-    res.json({ ...media, fileExists: exists });
+    res.json(media);
   } catch (err) {
-    console.error("Get media by ID error:", err);
+    console.error("❌ Get media by ID error:", err);
     res.status(500).json({ error: err.message });
   }
 }
 
-// Delete media safely
-async function deleteMedia(req, res) {
-  try {
-    const { id } = req.params;
-    const mediaCollection = getDB().collection("media");
-
-    const media = await mediaCollection.findOne({ _id: new ObjectId(id) });
-    if (!media) return res.status(404).json({ error: "Media not found" });
-
-    // Delete main file if exists
-    try {
-      const filePath = path.join(__dirname, "../uploads", media.folder, media.filename);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (err) {
-      console.warn("Main file delete failed or missing:", err.message);
-    }
-
-    // Delete thumbnail if exists
-    try {
-      if (media.thumbUrl) {
-        const thumbPath = path.join(__dirname, "../", media.thumbUrl);
-        if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
-      }
-    } catch (err) {
-      console.warn("Thumbnail delete failed or missing:", err.message);
-    }
-
-    // Remove from DB
-    await mediaCollection.deleteOne({ _id: new ObjectId(id) });
-    res.json({ message: "Media deleted successfully" });
-  } catch (err) {
-    console.error("Delete media error:", err);
-    res.status(500).json({ error: err.message });
-  }
-}
-
-// Update media metadata
+// === UPDATE MEDIA ===
 async function updateMedia(req, res) {
   try {
     const { id } = req.params;
     const { title, description, altText, tags } = req.body;
-    const mediaCollection = getDB().collection("media");
-    const result = await mediaCollection.updateOne(
+
+    const db = getDB();
+    const result = await db.collection("media").updateOne(
       { _id: new ObjectId(id) },
       { $set: { title, description, altText, tags: tags ? tags.split(",") : [] } }
     );
-    if (result.matchedCount === 0)
-      return res.status(404).json({ error: "Media not found" });
-    res.json({ message: "Media updated successfully" });
+
+    if (result.matchedCount === 0) return res.status(404).json({ error: "Media not found" });
+    res.json({ message: "✅ Media updated successfully" });
   } catch (err) {
-    console.error("Update media error:", err);
+    console.error("❌ Update media error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// === DELETE MEDIA ===
+async function deleteMedia(req, res) {
+  try {
+    const { id } = req.params;
+    const db = getDB();
+    const media = await db.collection("media").findOne({ _id: new ObjectId(id) });
+
+    if (!media) return res.status(404).json({ error: "Media not found" });
+
+    try {
+      const filePath = path.join(__dirname, "../uploads", media.folder, media.filename);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (err) {
+      console.warn("⚠️ File delete failed:", err.message);
+    }
+
+    try {
+      if (media.thumbUrl) {
+        const thumbPath = path.join(
+          __dirname,
+          "../uploads",
+          media.folder,
+          path.basename(media.thumbUrl)
+        );
+        if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+      }
+    } catch (err) {
+      console.warn("⚠️ Thumbnail delete failed:", err.message);
+    }
+
+    await db.collection("media").deleteOne({ _id: new ObjectId(id) });
+    res.json({ message: "✅ Media deleted successfully" });
+  } catch (err) {
+    console.error("❌ Delete media error:", err);
     res.status(500).json({ error: err.message });
   }
 }
