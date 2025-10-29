@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "async": "^3.2.6",
     "bcryptjs": "^3.0.2",
     "cookie": "^1.0.2",
@@ -26,6 +27,7 @@
     "mongoose": "^8.11.0",
     "multer": "^2.0.2",
     "parser": "^0.1.4",
+    "react-markdown": "^10.1.0",
     "sharp": "^0.34.4",
     "socket.io": "^4.8.1"
   }

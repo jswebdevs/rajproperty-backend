@@ -82,8 +82,42 @@ async function getAllChats(req, res) {
   }
 }
 
+/**
+ * Delete all messages for a specific visitor
+ * DELETE /api/chat/:email
+ */
+async function deleteConversation(req, res) {
+  try {
+    const db = getDB();
+    const { email } = req.params;
+
+    if (!email) return res.status(400).json({ error: "Email required" });
+
+    // Set messages array empty for the visitor
+    const result = await db.collection("visitors").updateOne(
+      { email },
+      { $set: { messages: [] } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Visitor not found" });
+    }
+
+    // Optionally: emit to client a 'conversation_deleted' event
+    if (req.io) {
+      req.io.emit("conversation_deleted", { email });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   addMessage,
   getMessages,
   getAllChats,
+  deleteConversation,
 };

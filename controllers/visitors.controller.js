@@ -51,4 +51,25 @@ async function getVisitors(req, res) {
   }
 }
 
-module.exports = { addVisitor, getVisitors };
+// Delete a visitor by email
+async function deleteVisitor(req, res) {
+  try {
+    const db = getDB();
+    const { email } = req.params;
+
+    if (!email) return res.status(400).json({ error: "Email required" });
+
+    const result = await db.collection("visitors").deleteOne({ email });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "Visitor not found" });
+    }
+
+    res.json({ success: true, message: "Visitor deleted!" });
+  } catch (err) {
+    console.error("Error in deleteVisitor:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { addVisitor, getVisitors, deleteVisitor };
